@@ -23,7 +23,7 @@ module.exports = (grunt) ->
   grunt.loadNpmTasks('grunt-contrib-less')
   grunt.loadNpmTasks('grunt-shell')
   grunt.loadNpmTasks('grunt-download-atom-shell')
-  grunt.loadNpmTasks('grunt-atom-shell-installer')
+  grunt.loadNpmTasks('grunt-electron-installer')
   grunt.loadNpmTasks('grunt-peg')
   grunt.loadTasks('tasks')
 
@@ -69,6 +69,8 @@ module.exports = (grunt) ->
       expand: true
       src: [
         'src/**/*.coffee'
+        'spec/*.coffee'
+        '!spec/*-spec.coffee'
         'exports/**/*.coffee'
         'static/**/*.coffee'
       ]
@@ -92,7 +94,7 @@ module.exports = (grunt) ->
   prebuildLessConfig =
     src: [
       'static/**/*.less'
-      'node_modules/bootstrap/less/bootstrap.less'
+      'node_modules/atom-space-pen-views/stylesheets/**/*.less'
     ]
 
   csonConfig =
@@ -125,10 +127,19 @@ module.exports = (grunt) ->
     {engines, theme} = grunt.file.readJSON(metadataPath)
     if engines?.atom?
       coffeeConfig.glob_to_multiple.src.push("#{directory}/**/*.coffee")
+      coffeeConfig.glob_to_multiple.src.push("!#{directory}/spec/**/*.coffee")
+
       lessConfig.glob_to_multiple.src.push("#{directory}/**/*.less")
-      prebuildLessConfig.src.push("#{directory}/**/*.less") unless theme
+      lessConfig.glob_to_multiple.src.push("!#{directory}/spec/**/*.less")
+
+      unless theme
+        prebuildLessConfig.src.push("#{directory}/**/*.less")
+        prebuildLessConfig.src.push("!#{directory}/spec/**/*.less")
+
       csonConfig.glob_to_multiple.src.push("#{directory}/**/*.cson")
-      pegConfig.glob_to_multiple.src.push("#{directory}/**/*.pegjs")
+      csonConfig.glob_to_multiple.src.push("!#{directory}/spec/**/*.cson")
+
+      pegConfig.glob_to_multiple.src.push("#{directory}/lib/*.pegjs")
 
   grunt.initConfig
     pkg: grunt.file.readJSON('package.json')
@@ -201,13 +212,14 @@ module.exports = (grunt) ->
       token: process.env.ATOM_ACCESS_TOKEN
 
     'create-windows-installer':
-      appDirectory: shellAppDir
-      outputDirectory: path.join(buildDir, 'installer')
-      authors: 'GitHub Inc.'
-      loadingGif: path.resolve(__dirname, '..', 'resources', 'win', 'loading.gif')
-      iconUrl: 'https://raw.githubusercontent.com/atom/atom/master/resources/win/atom.ico'
-      setupIcon: path.resolve(__dirname, '..', 'resources', 'win', 'atom.ico')
-      remoteReleases: 'https://atom.io/api/updates'
+      installer:
+        appDirectory: shellAppDir
+        outputDirectory: path.join(buildDir, 'installer')
+        authors: 'GitHub Inc.'
+        loadingGif: path.resolve(__dirname, '..', 'resources', 'win', 'loading.gif')
+        iconUrl: 'https://raw.githubusercontent.com/atom/atom/master/resources/win/atom.ico'
+        setupIcon: path.resolve(__dirname, '..', 'resources', 'win', 'atom.ico')
+        remoteReleases: 'https://atom.io/api/updates'
 
     shell:
       'kill-atom':
@@ -223,14 +235,14 @@ module.exports = (grunt) ->
 
   ciTasks = ['output-disk-space', 'download-atom-shell', 'download-atom-shell-chromedriver', 'build']
   ciTasks.push('dump-symbols') if process.platform isnt 'win32'
-  ciTasks.push('set-version', 'check-licenses', 'lint')
+  ciTasks.push('set-version', 'check-licenses', 'lint', 'generate-asar')
   ciTasks.push('mkdeb') if process.platform is 'linux'
-  ciTasks.push('create-windows-installer') if process.platform is 'win32'
+  ciTasks.push('create-windows-installer:installer') if process.platform is 'win32'
   ciTasks.push('test') if process.platform is 'darwin'
-  ciTasks.push('codesign')
-  ciTasks.push('publish-build')
+  ciTasks.push('codesign') unless process.env.TRAVIS
+  ciTasks.push('publish-build') unless process.env.TRAVIS
   grunt.registerTask('ci', ciTasks)
 
-  defaultTasks = ['download-atom-shell', 'download-atom-shell-chromedriver', 'build', 'set-version']
+  defaultTasks = ['download-atom-shell', 'download-atom-shell-chromedriver', 'build', 'set-version', 'generate-asar']
   defaultTasks.push 'install' unless process.platform is 'linux'
   grunt.registerTask('default', defaultTasks)

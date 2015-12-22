@@ -55,7 +55,7 @@ describe "the `atom` global", ->
   describe "loading default config", ->
     it 'loads the default core config', ->
       expect(atom.config.get('core.excludeVcsIgnoredPaths')).toBe true
-      expect(atom.config.get('core.followSymlinks')).toBe false
+      expect(atom.config.get('core.followSymlinks')).toBe true
       expect(atom.config.get('editor.showInvisibles')).toBe false
 
   describe "window onerror handler", ->
@@ -127,6 +127,33 @@ describe "the `atom` global", ->
           column: 3
           originalError: error
 
+  describe ".assert(condition, message, callback)", ->
+    errors = null
+
+    beforeEach ->
+      errors = []
+      atom.onDidFailAssertion (error) -> errors.push(error)
+
+    describe "if the condition is false", ->
+      it "notifies onDidFailAssertion handlers with an error object based on the call site of the assertion", ->
+        result = atom.assert(false, "a == b")
+        expect(result).toBe false
+        expect(errors.length).toBe 1
+        expect(errors[0].message).toBe "Assertion failed: a == b"
+        expect(errors[0].stack).toContain('atom-spec')
+
+      describe "if passed a callback function", ->
+        it "calls the callback with the assertion failure's error object", ->
+          error = null
+          atom.assert(false, "a == b", (e) -> error = e)
+          expect(error).toBe errors[0]
+
+    describe "if the condition is true", ->
+      it "does nothing", ->
+        result = atom.assert(true, "a == b")
+        expect(result).toBe true
+        expect(errors).toEqual []
+
   describe "saving and loading", ->
     afterEach -> atom.mode = "spec"
 
@@ -139,7 +166,7 @@ describe "the `atom` global", ->
         windowState: null
 
       spyOn(Atom, 'getLoadSettings').andCallFake -> loadSettings
-      spyOn(Atom, 'getStorageDirPath').andReturn(temp.mkdirSync("storage-dir-"))
+      spyOn(Atom.getStorageFolder(), 'getPath').andReturn(temp.mkdirSync("storage-dir-"))
 
       atom.mode = "editor"
       atom.state.stuff = "cool"
@@ -152,3 +179,47 @@ describe "the `atom` global", ->
       loadSettings.initialPaths = [dir2, dir1]
       atom2 = Atom.loadOrCreate("editor")
       expect(atom2.state.stuff).toBe("cool")
+
+  describe "openInitialEmptyEditorIfNecessary", ->
+    describe "when there are no paths set", ->
+      beforeEach ->
+        spyOn(atom, 'getLoadSettings').andReturn(initialPaths: [])
+
+      it "opens an empty buffer", ->
+        spyOn(atom.workspace, 'open')
+        atom.openInitialEmptyEditorIfNecessary()
+        expect(atom.workspace.open).toHaveBeenCalledWith(null)
+
+      describe "when there is already a buffer open", ->
+        beforeEach ->
+          waitsForPromise -> atom.workspace.open()
+
+        it "does not open an empty buffer", ->
+          spyOn(atom.workspace, 'open')
+          atom.openInitialEmptyEditorIfNecessary()
+          expect(atom.workspace.open).not.toHaveBeenCalled()
+
+    describe "when the project has a path", ->
+      beforeEach ->
+        spyOn(atom, 'getLoadSettings').andReturn(initialPaths: ['something'])
+        spyOn(atom.workspace, 'open')
+
+      it "does not open an empty buffer", ->
+        atom.openInitialEmptyEditorIfNecessary()
+        expect(atom.workspace.open).not.toHaveBeenCalled()
+
+  describe "adding a project folder", ->
+    it "adds a second path to the project", ->
+      initialPaths = atom.project.getPaths()
+      tempDirectory = temp.mkdirSync("a-new-directory")
+      spyOn(atom, "pickFolder").andCallFake (callback) ->
+        callback([tempDirectory])
+      atom.addProjectFolder()
+      expect(atom.project.getPaths()).toEqual(initialPaths.concat([tempDirectory]))
+
+    it "does nothing if the user dismisses the file picker", ->
+      initialPaths = atom.project.getPaths()
+      tempDirectory = temp.mkdirSync("a-new-directory")
+      spyOn(atom, "pickFolder").andCallFake (callback) -> callback(null)
+      atom.addProjectFolder()
+      expect(atom.project.getPaths()).toEqual(initialPaths)

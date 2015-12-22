@@ -1,8 +1,8 @@
 {Point, Range} = require 'text-buffer'
-{Model} = require 'theorist'
 {Emitter} = require 'event-kit'
 _ = require 'underscore-plus'
 Grim = require 'grim'
+Model = require './model'
 
 # Extended: The `Cursor` class represents the little blinking line identifying
 # where text can be inserted.
@@ -15,7 +15,6 @@ class Cursor extends Model
   bufferPosition: null
   goalColumn: null
   visible: true
-  needsAutoscroll: null
 
   # Instantiated by a {TextEditor}
   constructor: ({@editor, @marker, id}) ->
@@ -30,10 +29,6 @@ class Cursor extends Model
       {textChanged} = e
       return if oldHeadScreenPosition.isEqual(newHeadScreenPosition)
 
-      # Supports old editor view
-      @needsAutoscroll ?= @isLastCursor() and !textChanged
-      @autoscroll() if @editor.manageScrollPosition and @isLastCursor() and textChanged
-
       @goalColumn = null
 
       movedEvent =
@@ -44,16 +39,15 @@ class Cursor extends Model
         textChanged: textChanged
         cursor: this
 
-      @emit 'moved', movedEvent
+      @emit 'moved', movedEvent if Grim.includeDeprecatedAPIs
       @emitter.emit 'did-change-position', movedEvent
       @editor.cursorMoved(movedEvent)
     @marker.onDidDestroy =>
       @destroyed = true
       @editor.removeCursor(this)
-      @emit 'destroyed'
+      @emit 'destroyed' if Grim.includeDeprecatedAPIs
       @emitter.emit 'did-destroy'
       @emitter.dispose()
-    @needsAutoscroll = true
 
   destroy: ->
     @marker.destroy()
@@ -95,11 +89,11 @@ class Cursor extends Model
     @emitter.on 'did-change-visibility', callback
 
   on: (eventName) ->
+    return unless Grim.includeDeprecatedAPIs
+
     switch eventName
       when 'moved'
         Grim.deprecate("Use Cursor::onDidChangePosition instead")
-      when 'destroyed'
-        Grim.deprecate("Use Cursor::onDidDestroy instead")
       when 'destroyed'
         Grim.deprecate("Use Cursor::onDidDestroy instead")
       else
@@ -128,8 +122,9 @@ class Cursor extends Model
   #
   # * `bufferPosition` {Array} of two numbers: the buffer row, and the buffer column.
   # * `options` (optional) {Object} with the following keys:
-  #   * `autoscroll` A Boolean which, if `true`, scrolls the {TextEditor} to wherever
-  #     the cursor moves to.
+  #   * `autoscroll` {Boolean} indicating whether to autoscroll to the new
+  #     position. Defaults to `true` if this is the most recently added cursor,
+  #     `false` otherwise.
   setBufferPosition: (bufferPosition, options={}) ->
     @changePosition options, =>
       @marker.setHeadBufferPosition(bufferPosition, options)
@@ -161,7 +156,7 @@ class Cursor extends Model
 
   # Public: Returns whether the cursor is at the start of a line.
   isAtBeginningOfLine: ->
-    @getBufferPosition().column == 0
+    @getBufferPosition().column is 0
 
   # Public: Returns whether the cursor is on the line return character.
   isAtEndOfLine: ->
@@ -215,7 +210,7 @@ class Cursor extends Model
   isInsideWord: (options) ->
     {row, column} = @getBufferPosition()
     range = [[row, column], [row, Infinity]]
-    @editor.getTextInBufferRange(range).search(options?.wordRegex ? @wordRegExp()) == 0
+    @editor.getTextInBufferRange(range).search(options?.wordRegex ? @wordRegExp()) is 0
 
   # Public: Returns the indentation level of the current line.
   getIndentLevel: ->
@@ -229,9 +224,6 @@ class Cursor extends Model
   # Returns a {ScopeDescriptor}
   getScopeDescriptor: ->
     @editor.scopeDescriptorForBufferPosition(@getBufferPosition())
-  getScopes: ->
-    Grim.deprecate 'Use Cursor::getScopeDescriptor() instead'
-    @getScopeDescriptor().getScopesArray()
 
   # Public: Returns true if this cursor has no non-whitespace characters before
   # its current position.
@@ -251,7 +243,7 @@ class Cursor extends Model
   #
   # Returns a {Boolean}.
   isLastCursor: ->
-    this == @editor.getLastCursor()
+    this is @editor.getLastCursor()
 
   ###
   Section: Moving the Cursor
@@ -266,9 +258,9 @@ class Cursor extends Model
   moveUp: (rowCount=1, {moveToEndOfSelection}={}) ->
     range = @marker.getScreenRange()
     if moveToEndOfSelection and not range.isEmpty()
-      { row, column } = range.start
+      {row, column} = range.start
     else
-      { row, column } = @getScreenPosition()
+      {row, column} = @getScreenPosition()
 
     column = @goalColumn if @goalColumn?
     @setScreenPosition({row: row - rowCount, column: column}, skipSoftWrapIndentation: true)
@@ -283,9 +275,9 @@ class Cursor extends Model
   moveDown: (rowCount=1, {moveToEndOfSelection}={}) ->
     range = @marker.getScreenRange()
     if moveToEndOfSelection and not range.isEmpty()
-      { row, column } = range.end
+      {row, column} = range.end
     else
-      { row, column } = @getScreenPosition()
+      {row, column} = @getScreenPosition()
 
     column = @goalColumn if @goalColumn?
     @setScreenPosition({row: row + rowCount, column: column}, skipSoftWrapIndentation: true)
@@ -310,7 +302,7 @@ class Cursor extends Model
         columnCount-- # subtract 1 for the row move
 
       column = column - columnCount
-      @setScreenPosition({row, column})
+      @setScreenPosition({row, column}, clip: 'backward')
 
   # Public: Moves the cursor right one screen column.
   #
@@ -323,7 +315,7 @@ class Cursor extends Model
     if moveToEndOfSelection and not range.isEmpty()
       @setScreenPosition(range.end)
     else
-      { row, column } = @getScreenPosition()
+      {row, column} = @getScreenPosition()
       maxLines = @editor.getScreenLineCount()
       rowLength = @editor.lineTextForScreenRow(row).length
       columnsRemainingInLine = rowLength - column
@@ -337,11 +329,11 @@ class Cursor extends Model
         columnsRemainingInLine = rowLength
 
       column = column + columnCount
-      @setScreenPosition({row, column}, skipAtomicTokens: true, wrapBeyondNewlines: true, wrapAtSoftNewlines: true)
+      @setScreenPosition({row, column}, clip: 'forward', wrapBeyondNewlines: true, wrapAtSoftNewlines: true)
 
   # Public: Moves the cursor to the top of the buffer.
   moveToTop: ->
-    @setBufferPosition([0,0])
+    @setBufferPosition([0, 0])
 
   # Public: Moves the cursor to the bottom of the buffer.
   moveToBottom: ->
@@ -407,6 +399,18 @@ class Cursor extends Model
     if position = @getNextWordBoundaryBufferPosition()
       @setBufferPosition(position)
 
+  # Public: Moves the cursor to the previous subword boundary.
+  moveToPreviousSubwordBoundary: ->
+    options = {wordRegex: @subwordRegExp(backwards: true)}
+    if position = @getPreviousWordBoundaryBufferPosition(options)
+      @setBufferPosition(position)
+
+  # Public: Moves the cursor to the next subword boundary.
+  moveToNextSubwordBoundary: ->
+    options = {wordRegex: @subwordRegExp()}
+    if position = @getNextWordBoundaryBufferPosition(options)
+      @setBufferPosition(position)
+
   # Public: Moves the cursor to the beginning of the buffer line, skipping all
   # whitespace.
   skipLeadingWhitespace: ->
@@ -441,7 +445,7 @@ class Cursor extends Model
   getPreviousWordBoundaryBufferPosition: (options = {}) ->
     currentBufferPosition = @getBufferPosition()
     previousNonBlankRow = @editor.buffer.previousNonBlankRow(currentBufferPosition.row)
-    scanRange = [[previousNonBlankRow, 0], currentBufferPosition]
+    scanRange = [[previousNonBlankRow ? 0, 0], currentBufferPosition]
 
     beginningOfWordPosition = null
     @editor.backwardsScanInBufferRange (options.wordRegex ? @wordRegExp()), scanRange, ({range, stop}) ->
@@ -482,10 +486,6 @@ class Cursor extends Model
         stop()
 
     endOfWordPosition or currentBufferPosition
-
-  getMoveNextWordBoundaryBufferPosition: (options) ->
-    Grim.deprecate 'Use `::getNextWordBoundaryBufferPosition(options)` instead'
-    @getNextWordBoundaryBufferPosition(options)
 
   # Public: Retrieves the buffer position of where the current word starts.
   #
@@ -536,9 +536,13 @@ class Cursor extends Model
 
     endOfWordPosition = null
     @editor.scanInBufferRange (options.wordRegex ? @wordRegExp(options)), scanRange, ({range, stop}) ->
-      if range.start.isLessThanOrEqual(currentBufferPosition) or allowNext
-        endOfWordPosition = range.end
-      if not endOfWordPosition?.isEqual(currentBufferPosition)
+      if allowNext
+        if range.end.isGreaterThan(currentBufferPosition)
+          endOfWordPosition = range.end
+          stop()
+      else
+        if range.start.isLessThanOrEqual(currentBufferPosition)
+          endOfWordPosition = range.end
         stop()
 
     endOfWordPosition ? currentBufferPosition
@@ -598,10 +602,9 @@ class Cursor extends Model
 
   # Public: Sets whether the cursor is visible.
   setVisible: (visible) ->
-    if @visible != visible
+    if @visible isnt visible
       @visible = visible
-      @needsAutoscroll ?= true if @visible and @isLastCursor()
-      @emit 'visibility-changed', @visible
+      @emit 'visibility-changed', @visible if Grim.includeDeprecatedAPIs
       @emitter.emit 'did-change-visibility', @visible
 
   # Public: Returns the visibility of the cursor.
@@ -628,11 +631,10 @@ class Cursor extends Model
 
   # Public: Prevents this cursor from causing scrolling.
   clearAutoscroll: ->
-    @needsAutoscroll = null
 
   # Public: Deselects the current selection.
-  clearSelection: ->
-    @selection?.clear()
+  clearSelection: (options) ->
+    @selection?.clear(options)
 
   # Public: Get the RegExp used by the cursor to determine what a "word" is.
   #
@@ -650,17 +652,41 @@ class Cursor extends Model
       segments.push("[#{_.escapeRegExp(nonWordCharacters)}]+")
     new RegExp(segments.join("|"), "g")
 
+  # Public: Get the RegExp used by the cursor to determine what a "subword" is.
+  #
+  # * `options` (optional) {Object} with the following keys:
+  #   * `backwards` A {Boolean} indicating whether to look forwards or backwards
+  #     for the next subword. (default: false)
+  #
+  # Returns a {RegExp}.
+  subwordRegExp: (options={}) ->
+    nonWordCharacters = atom.config.get('editor.nonWordCharacters', scope: @getScopeDescriptor())
+    lowercaseLetters = 'a-z\\u00DF-\\u00F6\\u00F8-\\u00FF'
+    uppercaseLetters = 'A-Z\\u00C0-\\u00D6\\u00D8-\\u00DE'
+    snakeCamelSegment = "[#{uppercaseLetters}]?[#{lowercaseLetters}]+"
+    segments = [
+      "^[\t ]+",
+      "[\t ]+$",
+      "[#{uppercaseLetters}]+(?![#{lowercaseLetters}])",
+      "\\d+"
+    ]
+    if options.backwards
+      segments.push("#{snakeCamelSegment}_*")
+      segments.push("[#{_.escapeRegExp(nonWordCharacters)}]+\\s*")
+    else
+      segments.push("_*#{snakeCamelSegment}")
+      segments.push("\\s*[#{_.escapeRegExp(nonWordCharacters)}]+")
+    segments.push("_+")
+    new RegExp(segments.join("|"), "g")
+
   ###
   Section: Private
   ###
 
   changePosition: (options, fn) ->
-    @clearSelection()
-    @needsAutoscroll = options.autoscroll ? @isLastCursor()
+    @clearSelection(autoscroll: false)
     fn()
-    if @needsAutoscroll
-      @emit 'autoscrolled' # Support legacy editor
-      @autoscroll() if @needsAutoscroll and @editor.manageScrollPosition # Support react editor view
+    @autoscroll() if options.autoscroll ? @isLastCursor()
 
   getPixelRect: ->
     @editor.pixelRectForScreenRange(@getScreenRange())
@@ -681,20 +707,29 @@ class Cursor extends Model
     position = new Point(row, column - 1)
 
     @editor.scanInBufferRange /^\n*$/g, scanRange, ({range, stop}) ->
-      if !range.start.isEqual(start)
+      unless range.start.isEqual(start)
         position = range.start
         stop()
-    @editor.screenPositionForBufferPosition(position)
+    position
 
   getBeginningOfPreviousParagraphBufferPosition: ->
     start = @getBufferPosition()
 
     {row, column} = start
-    scanRange = [[row-1, column], [0,0]]
+    scanRange = [[row-1, column], [0, 0]]
     position = new Point(0, 0)
-    zero = new Point(0,0)
+    zero = new Point(0, 0)
     @editor.backwardsScanInBufferRange /^\n*$/g, scanRange, ({range, stop}) ->
-      if !range.start.isEqual(zero)
+      unless range.start.isEqual(zero)
         position = range.start
         stop()
-    @editor.screenPositionForBufferPosition(position)
+    position
+
+if Grim.includeDeprecatedAPIs
+  Cursor::getScopes = ->
+    Grim.deprecate 'Use Cursor::getScopeDescriptor() instead'
+    @getScopeDescriptor().getScopesArray()
+
+  Cursor::getMoveNextWordBoundaryBufferPosition = (options) ->
+    Grim.deprecate 'Use `::getNextWordBoundaryBufferPosition(options)` instead'
+    @getNextWordBoundaryBufferPosition(options)

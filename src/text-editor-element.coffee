@@ -3,6 +3,7 @@
 Path = require 'path'
 {defaults} = require 'underscore-plus'
 TextBuffer = require 'text-buffer'
+Grim = require 'grim'
 TextEditor = require './text-editor'
 TextEditorComponent = require './text-editor-component'
 TextEditorView = null
@@ -14,13 +15,14 @@ class TextEditorElement extends HTMLElement
   componentDescriptor: null
   component: null
   attached: false
-  lineOverdrawMargin: null
+  tileSize: null
   focusOnAttach: false
+  hasTiledRendering: true
 
   createdCallback: ->
     @emitter = new Emitter
     @initializeContent()
-    @createSpacePenShim()
+    @createSpacePenShim() if Grim.includeDeprecatedAPIs
     @addEventListener 'focus', @focused.bind(this)
     @addEventListener 'blur', @blurred.bind(this)
 
@@ -60,6 +62,7 @@ class TextEditorElement extends HTMLElement
 
   attachedCallback: ->
     @buildModel() unless @getModel()?
+    atom.assert(@model.isAlive(), "Attaching a view for a destroyed editor")
     @mountComponent() unless @component?
     @component.checkForVisibilityChange()
     if this is document.activeElement
@@ -81,12 +84,13 @@ class TextEditorElement extends HTMLElement
     @model = model
     @mountComponent()
     @addGrammarScopeAttribute()
-    @addMiniAttributeIfNeeded()
+    @addMiniAttribute() if @model.isMini()
     @addEncodingAttribute()
     @model.onDidChangeGrammar => @addGrammarScopeAttribute()
     @model.onDidChangeEncoding => @addEncodingAttribute()
     @model.onDidDestroy => @unmountComponent()
-    @__spacePenView.setModel(@model)
+    @model.onDidChangeMini (mini) => if mini then @addMiniAttribute() else @removeMiniAttribute()
+    @__spacePenView.setModel(@model) if Grim.includeDeprecatedAPIs
     @model
 
   getModel: ->
@@ -99,7 +103,7 @@ class TextEditorElement extends HTMLElement
       tabLength: 2
       softTabs: true
       mini: @hasAttribute('mini')
-      gutterVisible: not @hasAttribute('gutter-hidden')
+      lineNumberGutterVisible: not @hasAttribute('gutter-hidden')
       placeholderText: @getAttribute('placeholder-text')
     ))
 
@@ -109,15 +113,15 @@ class TextEditorElement extends HTMLElement
       rootElement: @rootElement
       stylesElement: @stylesElement
       editor: @model
-      lineOverdrawMargin: @lineOverdrawMargin
+      tileSize: @tileSize
       useShadowDOM: @useShadowDOM
     )
-    @rootElement.appendChild(@component.domNode)
+    @rootElement.appendChild(@component.getDomNode())
 
     if @useShadowDOM
       @shadowRoot.addEventListener('blur', @shadowRootBlurred.bind(this), true)
     else
-      inputNode = @component.hiddenInputComponent.domNode
+      inputNode = @component.hiddenInputComponent.getDomNode()
       inputNode.addEventListener 'focus', @focused.bind(this)
       inputNode.addEventListener 'blur', => @dispatchEvent(new FocusEvent('blur', bubbles: false))
 
@@ -125,7 +129,7 @@ class TextEditorElement extends HTMLElement
     callRemoveHooks(this)
     if @component?
       @component.destroy()
-      @component.domNode.remove()
+      @component.getDomNode().remove()
       @component = null
 
   focused: ->
@@ -133,7 +137,7 @@ class TextEditorElement extends HTMLElement
 
   blurred: (event) ->
     unless @useShadowDOM
-      if event.relatedTarget is @component.hiddenInputComponent.domNode
+      if event.relatedTarget is @component.hiddenInputComponent.getDomNode()
         event.stopImmediatePropagation()
         return
 
@@ -150,11 +154,13 @@ class TextEditorElement extends HTMLElement
     @component.focused() if event.relatedTarget is this
 
   addGrammarScopeAttribute: ->
-    grammarScope = @model.getGrammar()?.scopeName?.replace(/\./g, ' ')
-    @dataset.grammar = grammarScope
+    @dataset.grammar = @model.getGrammar()?.scopeName?.replace(/\./g, ' ')
 
-  addMiniAttributeIfNeeded: ->
-    @setAttributeNode(document.createAttribute("mini")) if @model.isMini()
+  addMiniAttribute: ->
+    @setAttributeNode(document.createAttribute("mini"))
+
+  removeMiniAttribute: ->
+    @removeAttribute("mini")
 
   addEncodingAttribute: ->
     @dataset.encoding = @model.getEncoding()
@@ -243,8 +249,9 @@ atom.commands.add 'atom-text-editor', stopEventPropagation(
   'core:move-right': -> @moveRight()
   'core:select-left': -> @selectLeft()
   'core:select-right': -> @selectRight()
+  'core:select-up': -> @selectUp()
+  'core:select-down': -> @selectDown()
   'core:select-all': -> @selectAll()
-  'editor:move-to-previous-word': -> @moveToPreviousWord()
   'editor:select-word': -> @selectWordsContainingCursors()
   'editor:consolidate-selections': (event) -> event.abortKeyBinding() unless @consolidateSelections()
   'editor:move-to-beginning-of-next-paragraph': -> @moveToBeginningOfNextParagraph()
@@ -259,6 +266,8 @@ atom.commands.add 'atom-text-editor', stopEventPropagation(
   'editor:move-to-beginning-of-next-word': -> @moveToBeginningOfNextWord()
   'editor:move-to-previous-word-boundary': -> @moveToPreviousWordBoundary()
   'editor:move-to-next-word-boundary': -> @moveToNextWordBoundary()
+  'editor:move-to-previous-subword-boundary': -> @moveToPreviousSubwordBoundary()
+  'editor:move-to-next-subword-boundary': -> @moveToNextSubwordBoundary()
   'editor:select-to-beginning-of-next-paragraph': -> @selectToBeginningOfNextParagraph()
   'editor:select-to-beginning-of-previous-paragraph': -> @selectToBeginningOfPreviousParagraph()
   'editor:select-to-end-of-line': -> @selectToEndOfLine()
@@ -268,6 +277,8 @@ atom.commands.add 'atom-text-editor', stopEventPropagation(
   'editor:select-to-beginning-of-next-word': -> @selectToBeginningOfNextWord()
   'editor:select-to-next-word-boundary': -> @selectToNextWordBoundary()
   'editor:select-to-previous-word-boundary': -> @selectToPreviousWordBoundary()
+  'editor:select-to-next-subword-boundary': -> @selectToNextSubwordBoundary()
+  'editor:select-to-previous-subword-boundary': -> @selectToPreviousSubwordBoundary()
   'editor:select-to-first-character-of-line': -> @selectToFirstCharacterOfLine()
   'editor:select-line': -> @selectLinesContainingCursors()
 )
@@ -278,10 +289,14 @@ atom.commands.add 'atom-text-editor', stopEventPropagationAndGroupUndo(
   'core:cut': -> @cutSelectedText()
   'core:copy': -> @copySelectedText()
   'core:paste': -> @pasteText()
+  'editor:delete-to-previous-word-boundary': -> @deleteToPreviousWordBoundary()
+  'editor:delete-to-next-word-boundary': -> @deleteToNextWordBoundary()
   'editor:delete-to-beginning-of-word': -> @deleteToBeginningOfWord()
   'editor:delete-to-beginning-of-line': -> @deleteToBeginningOfLine()
   'editor:delete-to-end-of-line': -> @deleteToEndOfLine()
   'editor:delete-to-end-of-word': -> @deleteToEndOfWord()
+  'editor:delete-to-beginning-of-subword': -> @deleteToBeginningOfSubword()
+  'editor:delete-to-end-of-subword': -> @deleteToEndOfSubword()
   'editor:delete-line': -> @deleteLine()
   'editor:cut-to-end-of-line': -> @cutToEndOfLine()
   'editor:transpose': -> @transpose()
@@ -296,8 +311,6 @@ atom.commands.add 'atom-text-editor:not([mini])', stopEventPropagation(
   'core:move-to-bottom': -> @moveToBottom()
   'core:page-up': -> @pageUp()
   'core:page-down': -> @pageDown()
-  'core:select-up': -> @selectUp()
-  'core:select-down': -> @selectDown()
   'core:select-to-top': -> @selectToTop()
   'core:select-to-bottom': -> @selectToBottom()
   'core:select-page-up': -> @selectPageUp()

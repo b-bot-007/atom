@@ -18,12 +18,13 @@
   'ctrl-d': 'core:delete'
 
   # Atom Specific
-  'cmd-O': 'application:open-dev'
   'cmd-alt-ctrl-s': 'application:run-all-specs'
   'enter': 'core:confirm'
   'escape': 'core:cancel'
   'up': 'core:move-up'
   'down': 'core:move-down'
+  'ctrl-up': 'core:move-up'
+  'ctrl-down': 'core:move-down'
   'left': 'core:move-left'
   'right': 'core:move-right'
   'ctrl-alt-cmd-l': 'window:reload'
@@ -37,6 +38,7 @@
   'cmd-N': 'application:new-window'
   'cmd-W': 'window:close'
   'cmd-o': 'application:open'
+  'cmd-O': 'application:add-project-folder'
   'cmd-T': 'pane:reopen-closed-item'
   'cmd-n': 'application:new-file'
   'cmd-s': 'core:save'
@@ -135,6 +137,12 @@
   'cmd-k cmd-l': 'editor:lower-case'
   'cmd-l': 'editor:select-line'
   'ctrl-t': 'editor:transpose'
+  'ctrl-alt-left': 'editor:move-to-previous-subword-boundary'
+  'ctrl-alt-right': 'editor:move-to-next-subword-boundary'
+  'ctrl-alt-shift-left': 'editor:select-to-previous-subword-boundary'
+  'ctrl-alt-shift-right': 'editor:select-to-next-subword-boundary'
+  'ctrl-alt-backspace': 'editor:delete-to-beginning-of-subword'
+  'ctrl-alt-delete': 'editor:delete-to-end-of-subword'
 
 'atom-workspace atom-text-editor:not([mini])':
   # Atom specific

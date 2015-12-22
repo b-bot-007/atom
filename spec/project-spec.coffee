@@ -13,6 +13,9 @@ describe "Project", ->
   beforeEach ->
     atom.project.setPaths([atom.project.getDirectories()[0]?.resolve('dir')])
 
+    # Wait for project's service consumers to be asynchronously added
+    waits(1)
+
   describe "constructor", ->
     it "enables a custom DirectoryProvider to supersede the DefaultDirectoryProvider", ->
       remotePath = "ssh://foreign-directory:8080/"
@@ -106,8 +109,8 @@ describe "Project", ->
       atom.packages.serviceHub.provide(
         "atom.repository-provider", "0.1.0", repositoryProvider)
 
-      expect(atom.project.repositoryProviders.length).toBe 2
-      expect(atom.project.getRepositories()).toEqual [dummyRepository]
+      waitsFor -> atom.project.repositoryProviders.length is 2
+      runs -> expect(atom.project.getRepositories()).toEqual [dummyRepository]
 
     it "does not update @repositories if every path has a Repository", ->
       repositories = atom.project.getRepositories()
@@ -221,7 +224,7 @@ describe "Project", ->
     beforeEach ->
       absolutePath = require.resolve('./fixtures/dir/a')
       newBufferHandler = jasmine.createSpy('newBufferHandler')
-      atom.project.on 'buffer-created', newBufferHandler
+      atom.project.onDidAddBuffer(newBufferHandler)
 
     describe "when given an absolute path that isn't currently open", ->
       it "returns a new edit session for the given path and emits 'buffer-created'", ->
@@ -436,6 +439,23 @@ describe "Project", ->
       expect(atom.project.getPaths()).toEqual([path.join(__dirname, "..", "src")])
       expect(atom.project.getRepositories()[0].isSubmodule("src")).toBe false
 
+    it "removes a path that is represented as a URI", ->
+      ftpURI = "ftp://example.com/some/folder"
+      directoryProvider =
+        directoryForURISync: (uri) ->
+          # Dummy implementation of Directory for which GitRepositoryProvider
+          # will not try to create a GitRepository.
+          getPath: -> ftpURI
+          getSubdirectory: -> {}
+          isRoot: -> true
+          off: ->
+      atom.packages.serviceHub.provide(
+        "atom.directory-provider", "0.1.0", directoryProvider)
+      atom.project.setPaths([ftpURI])
+      expect(atom.project.getPaths()).toEqual [ftpURI]
+      atom.project.removePath(ftpURI)
+      expect(atom.project.getPaths()).toEqual []
+
   describe ".relativize(path)", ->
     it "returns the path, relative to whichever root directory it is inside of", ->
       atom.project.addPath(temp.mkdirSync("another-path"))
@@ -469,6 +489,11 @@ describe "Project", ->
         randomPath = path.join("some", "random", "path")
         expect(atom.project.relativizePath(randomPath)).toEqual [null, randomPath]
 
+    describe "when the given path is a URL", ->
+      it "returns null for the root path, and the given path unchanged", ->
+        url = "http://the-path"
+        expect(atom.project.relativizePath(url)).toEqual [null, url]
+
   describe ".contains(path)", ->
     it "returns whether or not the given path is in one of the root directories", ->
       rootPath = atom.project.getPaths()[0]
@@ -480,7 +505,11 @@ describe "Project", ->
 
   describe ".eachBuffer(callback)", ->
     beforeEach ->
+      jasmine.snapshotDeprecations()
       atom.project.bufferForPathSync('a')
+
+    afterEach ->
+      jasmine.restoreDeprecationsSnapshot()
 
     it "invokes the callback for existing buffer", ->
       count = 0

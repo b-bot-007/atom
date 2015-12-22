@@ -28,13 +28,13 @@ module.exports = (rootPaths, regexSource, options) ->
     (rootPath, next) ->
       options2 = _.extend {}, options,
         inclusions: processPaths(rootPath, options.inclusions)
-        exclusions: processPaths(rootPath, options.exclusions)
+        globalExclusions: processPaths(rootPath, options.globalExclusions)
 
       scanner = new PathScanner(rootPath, options2)
 
       scanner.on 'path-found', ->
         pathsSearched++
-        if pathsSearched % PATHS_COUNTER_SEARCHED_CHUNK == 0
+        if pathsSearched % PATHS_COUNTER_SEARCHED_CHUNK is 0
           emit('scan:paths-searched', pathsSearched)
 
       search regex, scanner, searcher, ->

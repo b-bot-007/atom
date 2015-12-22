@@ -1,6 +1,5 @@
 path = require 'path'
 {$} = require './space-pen-extensions'
-_ = require 'underscore-plus'
 {Disposable} = require 'event-kit'
 ipc = require 'ipc'
 shell = require 'shell'
@@ -24,13 +23,15 @@ class WindowEventHandler
             if pathToOpen? and needsProjectPaths
               if fs.existsSync(pathToOpen)
                 atom.project.addPath(pathToOpen)
+              else if fs.existsSync(path.dirname(pathToOpen))
+                atom.project.addPath(path.dirname(pathToOpen))
               else
-                dirToOpen = path.dirname(pathToOpen)
-                if fs.existsSync(dirToOpen)
-                  atom.project.addPath(dirToOpen)
+                atom.project.addPath(pathToOpen)
 
             unless fs.isDirectorySync(pathToOpen)
               atom.workspace?.open(pathToOpen, {initialLine, initialColumn})
+
+          return
 
         when 'update-available'
           atom.updateAvailable(detail)
@@ -63,7 +64,10 @@ class WindowEventHandler
 
       atom.storeDefaultWindowDimensions()
       atom.storeWindowDimensions()
-      atom.unloadEditorWindow() if confirmed
+      if confirmed
+        atom.unloadEditorWindow()
+      else
+        ipc.send('cancel-window-close')
 
       confirmed
 
@@ -83,7 +87,7 @@ class WindowEventHandler
 
     if process.platform in ['win32', 'linux']
       @subscribeToCommand $(window), 'window:toggle-menu-bar', ->
-        atom.config.set('core.autoHideMenuBar', !atom.config.get('core.autoHideMenuBar'))
+        atom.config.set('core.autoHideMenuBar', not atom.config.get('core.autoHideMenuBar'))
 
     @subscribeToCommand $(document), 'core:focus-next', @focusNext
 
@@ -110,22 +114,22 @@ class WindowEventHandler
 
     @handleNativeKeybindings()
 
-  # Wire commands that should be handled by the native menu
-  # for elements with the `.native-key-bindings` class.
+  # Wire commands that should be handled by Chromium for elements with the
+  # `.native-key-bindings` class.
   handleNativeKeybindings: ->
     menu = null
     bindCommandToAction = (command, action) =>
       @subscribe $(document), command, (event) ->
         if event.target.webkitMatchesSelector('.native-key-bindings')
-          menu ?= require('remote').require('menu')
-          menu.sendActionToFirstResponder(action)
+          atom.getCurrentWindow().webContents[action]()
         true
 
-    bindCommandToAction('core:copy', 'copy:')
-    bindCommandToAction('core:paste', 'paste:')
-    bindCommandToAction('core:undo', 'undo:')
-    bindCommandToAction('core:redo', 'redo:')
-    bindCommandToAction('core:select-all', 'selectAll:')
+    bindCommandToAction('core:copy', 'copy')
+    bindCommandToAction('core:paste', 'paste')
+    bindCommandToAction('core:undo', 'undo')
+    bindCommandToAction('core:redo', 'redo')
+    bindCommandToAction('core:select-all', 'selectAll')
+    bindCommandToAction('core:cut', 'cut')
 
   onKeydown: (event) ->
     atom.keymaps.handleKeyboardEvent(event)
@@ -134,12 +138,11 @@ class WindowEventHandler
   onDrop: (event) ->
     event.preventDefault()
     event.stopPropagation()
-    pathsToOpen = _.pluck(event.dataTransfer.files, 'path')
-    atom.open({pathsToOpen}) if pathsToOpen.length > 0
 
   onDragOver: (event) ->
     event.preventDefault()
     event.stopPropagation()
+    event.dataTransfer.dropEffect = 'none'
 
   openLink: ({target, currentTarget}) ->
     location = target?.getAttribute('href') or currentTarget?.getAttribute('href')
@@ -156,6 +159,7 @@ class WindowEventHandler
       continue unless tabIndex >= 0
 
       callback(element, tabIndex)
+    return
 
   focusNext: =>
     focusedTabIndex = parseInt($(':focus').attr('tabindex')) or -Infinity

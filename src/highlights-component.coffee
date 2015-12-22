@@ -12,13 +12,11 @@ class HighlightsComponent
     @domNode = document.createElement('div')
     @domNode.classList.add('highlights')
 
-    if atom.config.get('editor.useShadowDOM')
-      insertionPoint = document.createElement('content')
-      insertionPoint.setAttribute('select', '.underlayer')
-      @domNode.appendChild(insertionPoint)
+  getDomNode: ->
+    @domNode
 
   updateSync: (state) ->
-    newState = state.content.highlights
+    newState = state.highlights
     @oldState ?= {}
 
     # remove highlights
@@ -38,6 +36,8 @@ class HighlightsComponent
         @regionNodesByHighlightId[id] = {}
         @domNode.appendChild(highlightNode)
       @updateHighlightNode(id, highlightState)
+
+    return
 
   updateHighlightNode: (id, newHighlightState) ->
     highlightNode = @highlightNodesById[id]
@@ -76,6 +76,10 @@ class HighlightsComponent
       unless oldHighlightState.regions[i]?
         oldHighlightState.regions[i] = {}
         regionNode = document.createElement('div')
+        # This prevents highlights at the tiles boundaries to be hidden by the
+        # subsequent tile. When this happens, subpixel anti-aliasing gets
+        # disabled.
+        regionNode.style.boxSizing = "border-box"
         regionNode.classList.add('region')
         regionNode.classList.add(newHighlightState.deprecatedRegionClass) if newHighlightState.deprecatedRegionClass?
         @regionNodesByHighlightId[id][i] = regionNode
@@ -91,6 +95,8 @@ class HighlightsComponent
             regionNode.style[property] = newRegionState[property] + 'px'
           else
             regionNode.style[property] = ''
+
+    return
 
   flashHighlightNodeIfRequested: (id, newHighlightState) ->
     oldHighlightState = @oldState[id]
